@@ -1,7 +1,12 @@
 package com.dawei.band_tracker;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Environment;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
@@ -9,6 +14,7 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -53,12 +59,12 @@ public class MainActivity extends AppCompatActivity {
     private enum SENSOR {GSR, ECG, TEMP, LIGHT, ACC, GYRO};
     private DataWriter writer;
 
-    private static final String dir = "GSRData";
+    private static final String dir = "SensorData";
     private File FILES_DIR;
-    //	private File file;
-//	private FileWriter writer;
+    private static final int REQUEST_EXTERNAL_STORAGE_RW = 1;
     private boolean isRunning = false;
     private boolean isSaved = false;
+    private final String TAG = "BAND";
 
     private HeartRateConsentListener mHeartRateConsentListener = new HeartRateConsentListener() {
         @Override
@@ -107,7 +113,8 @@ public class MainActivity extends AppCompatActivity {
                 String value = String.format("%d /min, %s", event.getHeartRate(), event.getQuality());
                 appendToUI(txtEcg, value);
                 if (isSaved) {
-                    writer.write(SENSOR.ECG, value);
+                    if (writer != null)
+                        writer.write(SENSOR.ECG, value);
                 }
             }
         }
@@ -121,7 +128,8 @@ public class MainActivity extends AppCompatActivity {
                 appendToUI(txtGSR, Integer.toString(value)+" koms");
 
                 if (isSaved) {
-                    writer.write(SENSOR.GSR, Integer.toString(value));
+                    if (writer != null)
+                        writer.write(SENSOR.GSR, Integer.toString(value));
                 }
             }
         }
@@ -134,7 +142,8 @@ public class MainActivity extends AppCompatActivity {
                 int value = event.getBrightness();
                 appendToUI(txtLight, String.format("%d lux", value));
                 if (isSaved) {
-                    writer.write(SENSOR.LIGHT, Integer.toString(value));
+                    if (writer != null)
+                        writer.write(SENSOR.LIGHT, Integer.toString(value));
                 }
             }
         }
@@ -147,7 +156,8 @@ public class MainActivity extends AppCompatActivity {
                 float value = event.getTemperature();
                 appendToUI(txtTemp, String.format("%f Celsius", value));
                 if (isSaved) {
-                    writer.write(SENSOR.TEMP, Float.toString(value));
+                    if (writer != null)
+                        writer.write(SENSOR.TEMP, Float.toString(value));
                 }
             }
         }
@@ -160,7 +170,8 @@ public class MainActivity extends AppCompatActivity {
                 String value = String.format("%.3f, %.3f, %.3f", event.getAccelerationX(), event.getAccelerationY(), event.getAccelerationZ());
                 appendToUI(txtAcc, value);
                 if (isSaved) {
-                    writer.write(SENSOR.ACC, value);
+                    if (writer != null)
+                        writer.write(SENSOR.ACC, value);
                 }
             }
         }
@@ -173,18 +184,23 @@ public class MainActivity extends AppCompatActivity {
                 String value = String.format(" %.3f %.3f %.3f", event.getAngularVelocityX(), event.getAngularVelocityY(), event.getAngularVelocityZ());
                 appendToUI(txtGyr, value);
                 if (isSaved) {
-                    writer.write(SENSOR.GYRO, value);
+                    if (writer != null)
+                        writer.write(SENSOR.GYRO, value);
                 }
             }
         }
     };
-
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        // Ask for permission if SDK version is greater than M
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Log.d(TAG, "Verify permissions.");
+            verifyExternalStoragePermissions();
+        }
         txtStatus = (TextView) findViewById(R.id.txtStatus);
         txtGSR = (TextView) findViewById(R.id.value_gsr);
         txtEcg = (TextView) findViewById(R.id.value_ecg);
@@ -203,10 +219,17 @@ public class MainActivity extends AppCompatActivity {
                     btnStart.setText("Stop");
                     txtStatus.setText("");
                     cbSave.setEnabled(false);
-                    FILES_DIR = new File(Environment.getExternalStoragePublicDirectory(
-                            Environment.DIRECTORY_DOCUMENTS), dir);
-                    if (isSaved)
+                    if (isSaved) {
+                        FILES_DIR = new File(Environment.getExternalStoragePublicDirectory(
+                                Environment.DIRECTORY_DOCUMENTS), dir);
+                        if (!FILES_DIR.exists()) {
+                            FILES_DIR.mkdirs();
+                            Log.d(TAG, "Create a new dir.");
+                        }
+                        Log.d("BAND", FILES_DIR.getAbsolutePath());
                         writer = new DataWriter(FILES_DIR);
+                        Log.d("BAND", "Writer: " + writer);
+                    }
                     new SubscriptionTask().execute();
                 } else {
                     isRunning = false;
@@ -225,8 +248,10 @@ public class MainActivity extends AppCompatActivity {
                             // Do nothing as this is happening during destroy
                         }
                     }
-                    if (isSaved)
-                        writer.finalize();
+                    if (isSaved) {
+                        if (writer != null)
+                            writer.finalize();
+                    }
                 }
             }
         });
@@ -284,7 +309,7 @@ public class MainActivity extends AppCompatActivity {
          */
         File local;
         /**
-         * Currently there are 6 stress related sensors:
+         * Currently there are 6 sensors:
          * 	SENSOR {GSR, ECG, TEMP, LIGHT, ACC, GYRO};
          */
         static final int NUMBER = 6;
@@ -428,5 +453,37 @@ public class MainActivity extends AppCompatActivity {
 
         appendToUI(txtStatus, "Band is connecting...\n");
         return ConnectionState.CONNECTED == client.connect().await();
+    }
+
+    private void verifyExternalStoragePermissions() {
+        if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+                || ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+
+            if (ActivityCompat.shouldShowRequestPermissionRationale(MainActivity.this, Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+                Log.d(TAG, "Request user to grant write permission");
+            }
+            else {
+                ActivityCompat.requestPermissions(MainActivity.this,
+                        new String[]{Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                        REQUEST_EXTERNAL_STORAGE_RW);
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
+        switch (requestCode) {
+            case REQUEST_EXTERNAL_STORAGE_RW: {
+                if (grantResults.length > 0
+                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    Log.d(TAG, "Write and read permissions are granted.");
+                } else {
+                    Log.d(TAG, "Write and read permissions are denied!");
+                }
+                break;
+            }
+            default:
+                Log.d(TAG, "Invalid permission request code.");
+        }
     }
 }
